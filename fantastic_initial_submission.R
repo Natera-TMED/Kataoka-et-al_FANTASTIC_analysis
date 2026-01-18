@@ -39,7 +39,7 @@ table(merge_dataset[!is.na(ctDNA_MRD_4wk),FOLFOXIRI])
 
 
 
-dt.pat.table.source = merge_dataset[, .(FOLFOXIRI, Sex, `Age group`=Age_group, 
+dt.pat.table.source = merge_dataset[, .(ACT, Sex, `Age group`=Age_group, 
                                         `Tumor location`=Tumor_location, `Pathological T stage`=pT.Stage, `Pathological N stage`=pN.Stage, 
                                         `Microsatellite Instability`=MSI, RAS, BRAF, `ECOG PS`=ECOG_PS, Resectability=Margins, 
                                         `Site of Metastases`=Site_Mets,`Synchronicity`=Mets.type)]
@@ -68,7 +68,28 @@ table
 table_flextable=as_flex_table(table)
 doc <- read_docx() %>%
   body_add_flextable(table_flextable)
-print(doc,target='gtsummary_table.docx')
+print(doc,target='Table1.docx')
+
+dt.pat.table.source = merge_dataset[FOLFOXIRI=='No', .(ACT_regimen, Sex, `Age group`=Age_group, 
+                                        `Tumor location`=Tumor_location, `Pathological T stage`=pT.Stage, `Pathological N stage`=pN.Stage, 
+                                        `Microsatellite Instability`=MSI, RAS, BRAF, `ECOG PS`=ECOG_PS, Resectability=Margins, 
+                                        `Site of Metastases`=Site_Mets,`Synchronicity`=Mets.type)]
+reset_gtsummary_theme()
+theme_gtsummary_compact()
+
+table <- dt.pat.table.source |>
+  tbl_summary(
+    by = ACT_regimen
+  ) |>
+  add_overall()
+
+table
+
+
+table_flextable=as_flex_table(table)
+doc <- read_docx() %>%
+  body_add_flextable(table_flextable)
+print(doc,target='TableS1.docx')
 
 ## other number for basic stats ##
 dim(merge_dataset[ctDNA_MRD_4wk=='POSITIVE' & RFS.event==1])
@@ -91,7 +112,7 @@ merge_dataset[FOLFOXIRI=='Yes' & ctDNA_MRD_4wk=='NEGATIVE' & ctDNA_postACT_7mo==
 table(merge_dataset[FOLFOXIRI=='No' & ctDNA_MRD_4wk=='POSITIVE',ACT_regimen])
 merge_dataset[FOLFOXIRI=='No' & ctDNA_MRD_4wk=='POSITIVE']
 merge_dataset[FOLFOXIRI=='No' & ctDNA_MRD_4wk=='POSITIVE' & ctDNA_postACT_7mo=='NEGATIVE',]
-summary(merge_dataset[FOLFOXIRI=='No' & ctDNA_MRD_4wk=='POSITIVE',MTM4w])
+summary(merge_dataset[FOLFOXIRI=='No' & ctDNA_MRD_4wk=='POSITIVE' & ctDNA_postACT_7mo %in% c('POSITIVE','NEGATIVE'),MTM4w])
 
 table(merge_dataset[FOLFOXIRI=='No' & ctDNA_MRD_4wk=='NEGATIVE' ,ctDNA_postACT_7mo])
 
@@ -909,3 +930,5 @@ ggplot(dt_long, aes(x = Timepoint, y = MTM, group = `FX-ID`, color = Projection_
   ) +
   theme_minimal()
 
+#---- inspect clearance ----
+merge_dataset[ctDNA_MRD_4wk=='POSITIVE' & ctDNA_postACT_7mo=='NEGATIVE' & Group=='SOC',ACT_regimen]
