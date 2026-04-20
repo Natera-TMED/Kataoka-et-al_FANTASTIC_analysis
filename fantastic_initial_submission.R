@@ -39,7 +39,7 @@ table(merge_dataset[!is.na(ctDNA_MRD_4wk),FOLFOXIRI])
 
 
 
-dt.pat.table.source = merge_dataset[, .(ACT, Sex, `Age group`=Age_group, 
+dt.pat.table.source = merge_dataset[, .(FOLFOXIRI,ACT, Sex, `Age group`=Age_group, 
                                         `Tumor location`=Tumor_location, `Pathological T stage`=pT.Stage, `Pathological N stage`=pN.Stage, 
                                         `Microsatellite Instability`=MSI, RAS, BRAF, `ECOG PS`=ECOG_PS, Resectability=Margins, 
                                         `Site of Metastases`=Site_Mets,`Synchronicity`=Mets.type)]
@@ -86,10 +86,10 @@ table <- dt.pat.table.source |>
 table
 
 
-table_flextable=as_flex_table(table)
-doc <- read_docx() %>%
-  body_add_flextable(table_flextable)
-print(doc,target='TableS1.docx')
+# table_flextable=as_flex_table(table)
+# doc <- read_docx() %>%
+#   body_add_flextable(table_flextable)
+# print(doc,target='TableS1.docx')
 
 ## other number for basic stats ##
 dim(merge_dataset[ctDNA_MRD_4wk=='POSITIVE' & RFS.event==1])
@@ -258,10 +258,42 @@ dt[, Liver_met := factor(Liver_met, levels = c("others", "liver_met"))]
 dt[,Site_Mets:=factor(Site_Mets)]
 dt
 
+#####################################
+##---- landmark consideration ---- ##
+#####################################
+merge_dataset %>% names()
+# merge_dataset[,.((Date_recurrence-Date_surgery)/30,RFS)]
+avg_month <- 30
+merge_dataset[, `:=`(
+  p_mrel_ctDNA4wk  = round(as.numeric(`4wk.DNA.collected` - Date_surgery) / avg_month, 2),
+  p_mrel_ctDNA7mo  = round(as.numeric(`7M.ctDNA.collected` - Date_surgery) / avg_month, 2),
+  p_mrel_ACT_start = round(as.numeric(Start.of.ACT - Date_surgery) / avg_month, 2),
+  p_mrel_ACT_end   = round(as.numeric(Last.date.ACT.treatment - Date_surgery) / avg_month, 2)
+)]
+
+cat("--- Summary: Relative Months from Surgery ---\n")
+merge_dataset[, lapply(.SD, function(x) {
+  c(max = round(max(x, na.rm = TRUE), 2), 
+    Median = round(median(x, na.rm = TRUE), 2))
+}), .SDcols = c("p_mrel_ctDNA4wk", "p_mrel_ctDNA7mo", "p_mrel_ACT_start", "p_mrel_ACT_end")]
+
+
+# cat("--- Summary: Relative days from Surgery ---\n")
+# merge_dataset[, lapply(.SD, function(x) {
+#   c(max = round(max(x*30, na.rm = TRUE), 2), 
+#     Median = round(median(x*30, na.rm = TRUE), 2))
+# }), .SDcols = c("p_mrel_ctDNA4wk", "p_mrel_ctDNA7mo", "p_mrel_ACT_start", "p_mrel_ACT_end")]
+
+
+landmarkctDNA4wk=1
+landmarkctDNA7mo=7
+landmark_medianACTend=7.5
 
 
 
-#---- secondary endpoint ---- 
+#################################
+##---- secondary endpoint ---- ##
+#################################
 #---- secondary endpoint: positivity ---- 
 
 
@@ -329,15 +361,17 @@ cat("\nProportions by Treatment Arm:\n")
 print(round(100 * prop_tab, 1))  # Show as percentages
 cat("\nFisher's Exact Test p-value:", signif(fisher_test$p.value, 3), "\n")
 
-#---- secondary endpoint: RFS & OS ---- 
-
+###########################################
+##---- secondary endpoint: RFS & OS ---- ##
+###########################################
 #### ctDNA positive/negative
-## RFS
-landmark_month <- 0
+## RFS 4wk
+
+landmark_month <-landmarkctDNA4wk
 # landmark_month <- 12*14/30
 
-df <- as.data.table(merge_dataset)
-df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
+# df <- as.data.table(merge_dataset)
+# df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
 df <- as.data.table(merge_dataset[FOLFOXIRI!='Yes'])
 dim(df)
 
@@ -346,7 +380,7 @@ df <- df[!is.na(ctDNA_MRD_4wk) & !is.na(RFS) & !is.na(RFS.event)]
 df[, ctDNA_MRD_4wk := factor(ctDNA_MRD_4wk, levels = c("NEGATIVE", "POSITIVE"))]
 df <- df[RFS > landmark_month]
 df[, RFS := RFS - landmark_month]
-
+dim(df)
 cox_fit <- coxph(Surv(RFS, RFS.event) ~ ctDNA_MRD_4wk, data = df)
 cox_summary <- summary(cox_fit)
 hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
@@ -382,21 +416,22 @@ surv_text[, label := paste0(group, ": ", median_text, "; RFS: ", rfs)]
 surv_line <- paste(surv_text$label, collapse = "\n")
 hr_label <- paste0(hr_label, "\n", surv_line)
 
-ggsurvplot(
+g=ggsurvplot(
   km_fit,
   data = df,
-  conf.int = TRUE,
+  conf.int = FALSE,
   risk.table = TRUE,
+  break.time.by = 6,
   lwd = 2,
   font.legend = c(14, "bold"),      
-  pval = TRUE,
-  xlab = "Time (months from surgery)",
+  pval = FALSE,
+  xlab = "Time (months from landmark)",
   ylab = "Recurrence-Free Survival Probability",
   # title = "RFS by MRD Status at 4 Weeks Post-surgery",
-  subtitle = hr_label,
+  # subtitle = hr_label,
   legend.title = "ctDNA MRD (4 wk)",
   legend.labs = c("NEGATIVE", "POSITIVE"),
-  palette = c("darkgreen", "red"),
+  palette = c("#46AC46", "#004677"),
   surv.median.line = "hv",
   censor = TRUE,
   ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 16, face="bold")),
@@ -405,9 +440,21 @@ ggsurvplot(
   )
 )
 
+g
+# pdf('Figure2A_DFS_ctDNA4wk_allpop.pdf')
+# pdf('Figure2B_DFS_ctDNA4wk_mFOLFOXIRI.pdf')
+pdf('Figure2C_DFS_ctDNA4wk_SOC.pdf')
 
-df <- as.data.table(merge_dataset)
-df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
+print(g, newpage = FALSE)
+dev.off()
+report_surv_extra(km_fit, cox_fit)
+
+## RFS 7mo
+
+landmark_month <- landmarkctDNA7mo
+
+# df <- as.data.table(merge_dataset)
+# df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
 df <- as.data.table(merge_dataset[FOLFOXIRI!='Yes'])
 
 df <- df[!is.na(ctDNA_postACT_7mo) & !is.na(RFS) & !is.na(RFS.event)]
@@ -451,22 +498,23 @@ surv_line <- paste(surv_text$label, collapse = "\n")
 hr_label <- paste0(hr_label, "\n", surv_line)
 
 km_fit <- survfit(Surv(RFS, RFS.event) ~ ctDNA_postACT_7mo, data = df)
-ggsurvplot(
+g=ggsurvplot(
   km_fit,
   data = df,
   lwd = 2,
   font.legend = c(14, "bold"), 
-  conf.int = TRUE,
+  conf.int = FALSE,
   risk.table = TRUE,
-  pval = TRUE,
-  xlab = "Time (months from surgery)",
+  break.time.by = 6,
+  pval = FALSE,
+  xlab = "Time (months from landmark)",
   ylab = "Recurrence-Free Survival Probability",
   # title = sprintf("RFS by post-ACT Status at 7 Months Post surgery"),
-  subtitle = hr_label,
+  # subtitle = hr_label,
   # title = sprintf("RFS by post-ACT Status at 7 Months Post surgery (Landmark: %g months)", landmark_month),
   legend.title = "ctDNA post-ACT (7 mo)",
   legend.labs = c("NEGATIVE", "POSITIVE"),
-  palette = c("darkgreen", "red"),
+  palette = c("#46AC46", "#004677"),
   surv.median.line = "hv",
   censor = TRUE,
   ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 16, face="bold")),
@@ -475,135 +523,150 @@ ggsurvplot(
   )
 )
 
-## OS
-merge_dataset[,OS:=Date_LAST_fu-Date_surgery,]
+g
+# pdf('Figure2D_DFS_ctDNA7mo_allpop.pdf')
+# pdf('Figure2E_DFS_ctDNA7mo_mFOLFOXIRI.pdf')
+pdf('Figure2F_DFS_ctDNA7mo_SOC.pdf')
 
-df <- as.data.table(merge_dataset)
-# df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
-# df <- as.data.table(merge_dataset[FOLFOXIRI!='Yes'])
-dim(df)
-
-df <- df[!is.na(ctDNA_MRD_4wk) & !is.na(OS) & !is.na(OS.event)]
-df[, ctDNA_MRD_4wk := factor(ctDNA_MRD_4wk, levels = c("NEGATIVE", "POSITIVE"))]
-df <- df[OS > landmark_month]
-df[, OS := OS - landmark_month]
-
-cox_fit <- coxph(Surv(OS, OS.event) ~ ctDNA_MRD_4wk, data = df)
-cox_summary <- summary(cox_fit)
-hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
-lower_ci <- round(cox_summary$conf.int[,"lower .95"], 2)
-upper_ci <- round(cox_summary$conf.int[,"upper .95"], 2)
-hr_label <- sprintf("HR = %.2f (95%% CI: %.2f–%.2f)", hr, lower_ci, upper_ci)
-
-km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_MRD_4wk, data = df)
-group_names <- names(km_fit$strata)
-group_labels <- gsub("^.*=", "", group_names)
-
-summary_fit <- summary(km_fit, times = c(12,24, 36))
-
-surv_df <- data.table(
-  group = gsub("^.*=", "", summary_fit$strata),
-  time = summary_fit$time,
-  surv = summary_fit$surv
-)
-
-surv_text <- surv_df[!is.na(surv), .(
-  text = paste0(time / 12, "y: ", scales::percent(surv, accuracy = 0.1))
-), by = group][
-  , .(text = paste(text, collapse = "; ")), by = group
-][
-  , paste0(group, " OS: ", text)
-]
-
-surv_line <- paste(surv_text, collapse = "\n")
-hr_label <- paste0(hr_label, "\n", surv_line)
+print(g, newpage = FALSE)
+dev.off()
+report_surv_extra(km_fit, cox_fit)
 
 
-km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_MRD_4wk, data = df)
-ggsurvplot(
-  km_fit,
-  data = df,
-  conf.int = TRUE,
-  risk.table = TRUE,
-  pval = TRUE,
-  xlab = "Time (months from surgery)",
-  ylab = "Recurrence-Free Survival Probability",
-  title = sprintf("OS by MRD Status at 4 Weeks Post-surgery"),
-  subtitle = hr_label,
-  # title = sprintf("OS by MRD Status at 4 Weeks Post-surgery (Landmark: %g months)", landmark_month),
-  legend.title = "ctDNA MRD (4 wk)",
-  legend.labs = c("NEGATIVE", "POSITIVE"),
-  palette = c("darkgreen", "red"),
-  surv.median.line = "hv",
-  censor = TRUE,
-  ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 12))  
-)
-
-
-df <- as.data.table(merge_dataset)
-# df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
-# df <- as.data.table(merge_dataset[FOLFOXIRI!='Yes'])
-
-df <- df[!is.na(ctDNA_postACT_7mo) & !is.na(OS) & !is.na(OS.event) & ctDNA_postACT_7mo %in% c('POSITIVE','NEGATIVE')]
-df[, ctDNA_postACT_7mo := factor(ctDNA_postACT_7mo, levels = c("NEGATIVE", "POSITIVE"))]
-df <- df[OS > landmark_month]
-df[, OS := OS - landmark_month]
-
-cox_fit <- coxph(Surv(OS, OS.event) ~ ctDNA_postACT_7mo, data = df)
-cox_summary <- summary(cox_fit)
-hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
-lower_ci <- round(cox_summary$conf.int[,"lower .95"], 2)
-upper_ci <- round(cox_summary$conf.int[,"upper .95"], 2)
-hr_label <- sprintf("HR = %.2f (95%% CI: %.2f–%.2f)", hr, lower_ci, upper_ci)
-
-km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_postACT_7mo, data = df)
-group_names <- names(km_fit$strata)
-group_labels <- gsub("^.*=", "", group_names)
-
-summary_fit <- summary(km_fit, times = c(12,24, 36))
-
-surv_df <- data.table(
-  group = gsub("^.*=", "", summary_fit$strata),
-  time = summary_fit$time,
-  surv = summary_fit$surv
-)
-
-surv_text <- surv_df[!is.na(surv), .(
-  text = paste0(time / 12, "y: ", scales::percent(surv, accuracy = 0.1))
-), by = group][
-  , .(text = paste(text, collapse = "; ")), by = group
-][
-  , paste0(group, " OS: ", text)
-]
-
-surv_line <- paste(surv_text, collapse = "\n")
-hr_label <- paste0(hr_label, "\n", surv_line)
-
-km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_postACT_7mo, data = df)
-ggsurvplot(
-  km_fit,
-  data = df,
-  conf.int = TRUE,
-  risk.table = TRUE,
-  pval = TRUE,
-  xlab = "Time (months from surgery)",
-  ylab = "Recurrence-Free Survival Probability",
-  title = sprintf("OS by post-ACT Status at 7 Months Post surgery"),
-  subtitle = hr_label,
-  # title = sprintf("OS by post-ACT Status at 7 Months Post surgery (Landmark: %g months)", landmark_month),
-  legend.title = "ctDNA post-ACT (7 mo)",
-  legend.labs = c("NEGATIVE", "POSITIVE"),
-  palette = c("darkgreen", "red"),
-  surv.median.line = "hv",
-  censor = TRUE,
-  ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 12))  
-)
+# ## OS
+# 
+# landmark_month <- landmarkctDNA4wk
+# merge_dataset[,OS:=Date_LAST_fu-Date_surgery,]
+# 
+# df <- as.data.table(merge_dataset)
+# # df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
+# # df <- as.data.table(merge_dataset[FOLFOXIRI!='Yes'])
+# dim(df)
+# 
+# df <- df[!is.na(ctDNA_MRD_4wk) & !is.na(OS) & !is.na(OS.event)]
+# df[, ctDNA_MRD_4wk := factor(ctDNA_MRD_4wk, levels = c("NEGATIVE", "POSITIVE"))]
+# df <- df[OS > landmark_month]
+# df[, OS := OS - landmark_month]
+# 
+# cox_fit <- coxph(Surv(OS, OS.event) ~ ctDNA_MRD_4wk, data = df)
+# cox_summary <- summary(cox_fit)
+# hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
+# lower_ci <- round(cox_summary$conf.int[,"lower .95"], 2)
+# upper_ci <- round(cox_summary$conf.int[,"upper .95"], 2)
+# hr_label <- sprintf("HR = %.2f (95%% CI: %.2f–%.2f)", hr, lower_ci, upper_ci)
+# 
+# km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_MRD_4wk, data = df)
+# group_names <- names(km_fit$strata)
+# group_labels <- gsub("^.*=", "", group_names)
+# 
+# summary_fit <- summary(km_fit, times = c(12,24, 36))
+# 
+# surv_df <- data.table(
+#   group = gsub("^.*=", "", summary_fit$strata),
+#   time = summary_fit$time,
+#   surv = summary_fit$surv
+# )
+# 
+# surv_text <- surv_df[!is.na(surv), .(
+#   text = paste0(time / 12, "y: ", scales::percent(surv, accuracy = 0.1))
+# ), by = group][
+#   , .(text = paste(text, collapse = "; ")), by = group
+# ][
+#   , paste0(group, " OS: ", text)
+# ]
+# 
+# surv_line <- paste(surv_text, collapse = "\n")
+# hr_label <- paste0(hr_label, "\n", surv_line)
+# 
+# 
+# km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_MRD_4wk, data = df)
+# ggsurvplot(
+#   km_fit,
+#   data = df,
+#   conf.int = FALSE,
+#   risk.table = TRUE,
+#   break.time.by = 6,
+#   pval = TRUE,
+#   xlab = "Time (months from landmark)",
+#   ylab = "Recurrence-Free Survival Probability",
+#   title = sprintf("OS by MRD Status at 4 Weeks Post-surgery"),
+#   subtitle = hr_label,
+#   # title = sprintf("OS by MRD Status at 4 Weeks Post-surgery (Landmark: %g months)", landmark_month),
+#   legend.title = "ctDNA MRD (4 wk)",
+#   legend.labs = c("NEGATIVE", "POSITIVE"),
+#   palette = c("#46AC46", "#004677"),
+#   surv.median.line = "hv",
+#   censor = TRUE,
+#   ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 12))  
+# )
+# 
+# 
+# landmark_month <- landmarkctDNA7mo
+# df <- as.data.table(merge_dataset)
+# # df <- as.data.table(merge_dataset[FOLFOXIRI=='Yes'])
+# # df <- as.data.table(merge_dataset[FOLFOXIRI!='Yes'])
+# 
+# df <- df[!is.na(ctDNA_postACT_7mo) & !is.na(OS) & !is.na(OS.event) & ctDNA_postACT_7mo %in% c('POSITIVE','NEGATIVE')]
+# df[, ctDNA_postACT_7mo := factor(ctDNA_postACT_7mo, levels = c("NEGATIVE", "POSITIVE"))]
+# df <- df[OS > landmark_month]
+# df[, OS := OS - landmark_month]
+# 
+# cox_fit <- coxph(Surv(OS, OS.event) ~ ctDNA_postACT_7mo, data = df)
+# cox_summary <- summary(cox_fit)
+# hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
+# lower_ci <- round(cox_summary$conf.int[,"lower .95"], 2)
+# upper_ci <- round(cox_summary$conf.int[,"upper .95"], 2)
+# hr_label <- sprintf("HR = %.2f (95%% CI: %.2f–%.2f)", hr, lower_ci, upper_ci)
+# 
+# km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_postACT_7mo, data = df)
+# group_names <- names(km_fit$strata)
+# group_labels <- gsub("^.*=", "", group_names)
+# 
+# summary_fit <- summary(km_fit, times = c(12,24, 36))
+# 
+# surv_df <- data.table(
+#   group = gsub("^.*=", "", summary_fit$strata),
+#   time = summary_fit$time,
+#   surv = summary_fit$surv
+# )
+# 
+# surv_text <- surv_df[!is.na(surv), .(
+#   text = paste0(time / 12, "y: ", scales::percent(surv, accuracy = 0.1))
+# ), by = group][
+#   , .(text = paste(text, collapse = "; ")), by = group
+# ][
+#   , paste0(group, " OS: ", text)
+# ]
+# 
+# surv_line <- paste(surv_text, collapse = "\n")
+# hr_label <- paste0(hr_label, "\n", surv_line)
+# 
+# km_fit <- survfit(Surv(OS, OS.event) ~ ctDNA_postACT_7mo, data = df)
+# ggsurvplot(
+#   km_fit,
+#   data = df,
+#   conf.int = FALSE,
+#   risk.table = TRUE,
+#   break.time.by = 6,
+#   pval = TRUE,
+#   xlab = "Time (months from landmark)",
+#   ylab = "Recurrence-Free Survival Probability",
+#   title = sprintf("OS by post-ACT Status at 7 Months Post surgery"),
+#   subtitle = hr_label,
+#   # title = sprintf("OS by post-ACT Status at 7 Months Post surgery (Landmark: %g months)", landmark_month),
+#   legend.title = "ctDNA post-ACT (7 mo)",
+#   legend.labs = c("NEGATIVE", "POSITIVE"),
+#   palette = c("#46AC46", "#004677"),
+#   surv.median.line = "hv",
+#   censor = TRUE,
+#   ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 12))  
+# )
 
 #### observation vs treatment
 
 ### RFS
 # landmark_month <- 535/30
-landmark_month <- 0
+landmark_month <- landmark_medianACTend
 
 df <- as.data.table(merge_dataset)
 # df <- as.data.table(merge_dataset[ctDNA_MRD_4wk=='POSITIVE'])
@@ -655,18 +718,19 @@ hr_label <- paste0(hr_label, "\n", surv_line)
 
 km_fit <- survfit(Surv(RFS, RFS.event) ~ Group, data = df)
 
-ggsurvplot(
+g=ggsurvplot(
   km_fit,
   data = df,
-  conf.int = TRUE,
+  conf.int = FALSE,
   risk.table = TRUE,
+  break.time.by = 6,
   lwd = 2,
   font.legend = c(14, "bold"),
-  pval = TRUE,
-  xlab = "Time (months from surgery)",
+  pval = FALSE,
+  xlab = "Time (months from landmark)",
   ylab = "Recurrence-Free Survival Probability",
   # title = sprintf("RFS by Treatment Group"),
-  subtitle = hr_label,
+  # subtitle = hr_label,
   # title = sprintf("RFS by Treatment Group  (Landmark: %g months)", landmark_month),
   legend.title = "Group",
   legend.labs = c("SOC","mFOLFOXIRI"),
@@ -678,70 +742,86 @@ ggsurvplot(
     axis.title.y = element_text(size = 8)
   )
   )
-### OS
 
-df <- as.data.table(merge_dataset)
-# df <- as.data.table(merge_dataset[ctDNA_MRD_4wk=='POSITIVE'])
-# df <- as.data.table(merge_dataset[ctDNA_MRD_4wk=='NEGATIVE'])
-# df <- as.data.table(merge_dataset[ctDNA_postACT_7mo=='POSITIVE'])
-# df <- as.data.table(merge_dataset[ctDNA_postACT_7mo=='NEGATIVE'])
-dim(df)
 
-df <- df[!is.na(Group) & !is.na(OS) & !is.na(OS.event)]
-df[, Group := factor(Group,levels=c("SOC","mFOLFOXIRI"))]
+g
+pdf('Figure3A_DFS_all_pop.pdf')
+# pdf('Figure3B_DFS_4wk_ctDNApositive.pdf')
+# pdf('Figure3D_DFS_4wk_ctDNAnegative.pdf')
+# pdf('Figure3C_DFS_7mo_ctDNApositive.pdf')
+# pdf('Figure3E_DFS_7mo_ctDNAnegative.pdf')
 
-df <- df[OS > landmark_month]
-df[, OS := OS - landmark_month]
+print(g, newpage = FALSE)
+dev.off()
+report_surv_extra(km_fit, cox_fit)
 
-cox_fit <- coxph(Surv(OS, OS.event) ~ Group, data = df)
-cox_summary <- summary(cox_fit)
-hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
-lower_ci <- round(cox_summary$conf.int[,"lower .95"], 2)
-upper_ci <- round(cox_summary$conf.int[,"upper .95"], 2)
-hr_label <- sprintf("HR = %.2f (95%% CI: %.2f–%.2f)", hr, lower_ci, upper_ci)
-
-km_fit <- survfit(Surv(OS, OS.event) ~ Group, data = df)
-group_names <- names(km_fit$strata)
-group_labels <- gsub("^.*=", "", group_names)
-
-summary_fit <- summary(km_fit, times = c(12,24, 36))
-
-surv_df <- data.table(
-  group = gsub("^.*=", "", summary_fit$strata),
-  time = summary_fit$time,
-  surv = summary_fit$surv
-)
-
-surv_text <- surv_df[!is.na(surv), .(
-  text = paste0(time / 12, "y: ", scales::percent(surv, accuracy = 0.1))
-), by = group][
-  , .(text = paste(text, collapse = "; ")), by = group
-][
-  , paste0(group, " OS: ", text)
-]
-
-surv_line <- paste(surv_text, collapse = "\n")
-hr_label <- paste0(hr_label, "\n", surv_line)
-
-km_fit <- survfit(Surv(OS, OS.event) ~ Group, data = df)
-ggsurvplot(
-  km_fit,
-  data = df,
-  conf.int = TRUE,
-  risk.table = TRUE,
-  pval = TRUE,
-  xlab = "Time (months from surgery)",
-  ylab = "Recurrence-Free Survival Probability",
-  title = sprintf("OS by Treatment Group"),
-  subtitle = hr_label,
-  # title = sprintf("OS by Treatment Group  (Landmark: %g months)", landmark_month),
-  legend.title = "Group",
-  legend.labs = c("SOC","mFOLFOXIRI"),
-  palette = c("orange","purple"),
-  surv.median.line = "hv",
-  censor = TRUE,
-  ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 12))  
-)
+# ### OS
+# 
+# landmark_month <- landmark_medianACTend
+# 
+# df <- as.data.table(merge_dataset)
+# # df <- as.data.table(merge_dataset[ctDNA_MRD_4wk=='POSITIVE'])
+# # df <- as.data.table(merge_dataset[ctDNA_MRD_4wk=='NEGATIVE'])
+# # df <- as.data.table(merge_dataset[ctDNA_postACT_7mo=='POSITIVE'])
+# # df <- as.data.table(merge_dataset[ctDNA_postACT_7mo=='NEGATIVE'])
+# dim(df)
+# 
+# df <- df[!is.na(Group) & !is.na(OS) & !is.na(OS.event)]
+# df[, Group := factor(Group,levels=c("SOC","mFOLFOXIRI"))]
+# 
+# df <- df[OS > landmark_month]
+# df[, OS := OS - landmark_month]
+# 
+# cox_fit <- coxph(Surv(OS, OS.event) ~ Group, data = df)
+# cox_summary <- summary(cox_fit)
+# hr <- round(cox_summary$coefficients[,"exp(coef)"], 2)
+# lower_ci <- round(cox_summary$conf.int[,"lower .95"], 2)
+# upper_ci <- round(cox_summary$conf.int[,"upper .95"], 2)
+# hr_label <- sprintf("HR = %.2f (95%% CI: %.2f–%.2f)", hr, lower_ci, upper_ci)
+# 
+# km_fit <- survfit(Surv(OS, OS.event) ~ Group, data = df)
+# group_names <- names(km_fit$strata)
+# group_labels <- gsub("^.*=", "", group_names)
+# 
+# summary_fit <- summary(km_fit, times = c(12,24, 36))
+# 
+# surv_df <- data.table(
+#   group = gsub("^.*=", "", summary_fit$strata),
+#   time = summary_fit$time,
+#   surv = summary_fit$surv
+# )
+# 
+# surv_text <- surv_df[!is.na(surv), .(
+#   text = paste0(time / 12, "y: ", scales::percent(surv, accuracy = 0.1))
+# ), by = group][
+#   , .(text = paste(text, collapse = "; ")), by = group
+# ][
+#   , paste0(group, " OS: ", text)
+# ]
+# 
+# surv_line <- paste(surv_text, collapse = "\n")
+# hr_label <- paste0(hr_label, "\n", surv_line)
+# 
+# km_fit <- survfit(Surv(OS, OS.event) ~ Group, data = df)
+# ggsurvplot(
+#   km_fit,
+#   data = df,
+#   conf.int = FALSE,
+#   risk.table = TRUE,
+#   break.time.by = 6,
+#   pval = TRUE,
+#   xlab = "Time (months from landmark)",
+#   ylab = "Recurrence-Free Survival Probability",
+#   title = sprintf("OS by Treatment Group"),
+#   subtitle = hr_label,
+#   # title = sprintf("OS by Treatment Group  (Landmark: %g months)", landmark_month),
+#   legend.title = "Group",
+#   legend.labs = c("SOC","mFOLFOXIRI"),
+#   palette = c("orange","purple"),
+#   surv.median.line = "hv",
+#   censor = TRUE,
+#   ggtheme = theme_bw() + theme(plot.subtitle = element_text(size = 12))  
+# )
 
 
 #---- clearance ---- 
@@ -809,7 +889,7 @@ matrix <- matrix(c(3, 6, 1, 15), nrow = 2,
 fisher.test(matrix)
 
 #---- Cox ----
-landmark_month <- 0
+landmark_month <- landmark_medianACTend
 
 dt=as.data.table(merge_dataset)
 # dt=as.data.table(merge_dataset[Site_Mets=='Liver'])
@@ -844,7 +924,12 @@ cox_model <- coxph(Surv(RFS, RFS.event) ~ ctDNA_MRD_4wk  + Sex  + FOLFOXIRI+ `Me
 
 
 summary(cox_model)
-forest_plot_cox(cox_model)
+g=forest_plot_cox(cox_model)
+g
+pdf('Figure4.pdf', width = 12, height = 6)
+print(g, newpage = FALSE)
+dev.off()
+
 
 
 
@@ -857,78 +942,99 @@ table(data[FOLFOXIRI==1,.(Specify,specify)]) #both grade
 dim(data[FOLFOXIRI==1])
 
 
+################
+## propensity ##
+################
 
-#---- MTM ----
 
-library(ggrepel)
+# Load necessary libraries for IPTW and weighting
+if(!require(WeightIt)) install.packages("WeightIt")
+if(!require(cobalt)) install.packages("cobalt")
+library(WeightIt)
+library(cobalt)
+library(survival)
+library(survminer)
 
-# dt=copy(merge_dataset.copy)
-dt=merge_dataset[FOLFOXIRI=='Yes']
-dt=merge_dataset[FOLFOXIRI=='No']
-summary(c(dt[ctDNA_MRD_4wk=='POSITIVE',MTM4w]))
-dt_long <- data.table::melt(
-  dt,
-  measure.vars = c("MTM4w", "MTM7m"),
-  variable.name = "Timepoint",
-  value.name = "MTM"
+# 1. Prepare the Landmark Dataset (Survival at 7.5 months)
+ps_dt <- as.data.table(merge_dataset)
+ps_dt <- ps_dt[!is.na(Group) & !is.na(RFS) & !is.na(RFS.event)]
+ps_dt <- ps_dt[RFS > landmark_medianACTend] # Entry into Landmark cohort [cite: 53-55]
+
+# 2. Convert Treatment to Binary (0/1) 
+ps_dt[, treat := ifelse(Group == "mFOLFOXIRI", 1, 0)]
+
+# 3. Estimate Weights using IPTW
+# NOTE: MSI is excluded because it only has 1 level in the landmark cohort
+# 'ate' calculates weights for the Average Treatment Effect
+weight_obj <- weightit(treat ~ Age + Sex + Tumor_location + pT.Stage + 
+                         pN.Stage + RAS + BRAF + ECOG_PS + 
+                         Margins + Site_Mets + Mets.type,
+                       data = ps_dt,
+                       method = "ps",      # Propensity score weighting
+                       estimand = "ATE")   # Average Treatment Effect
+
+# 4. Check Balance (The Love Plot)
+# This will have a normal x-axis because we removed MSI
+love=love.plot(weight_obj, 
+          threshold = 0.1, 
+          abs = TRUE, 
+          main = "Covariate Balance After IPTW Weighting")
+
+love
+pdf('FigureS3a.pdf')
+print(love, newpage = FALSE)
+dev.off()
+
+
+# 5. Prepare data for Weighted Analysis
+ps_dt$weights <- weight_obj$weights
+
+# 6. Analyze Outcomes (Weighted Kaplan-Meier)
+# Re-adjust RFS to start from the landmark
+ps_dt[, RFS_adj := RFS - landmark_medianACTend]
+
+# Use the 'weights' argument in survfit
+km_weighted <- survfit(Surv(RFS_adj, RFS.event) ~ Group, 
+                       data = ps_dt, 
+                       weights = weights)
+
+# 7. Plot the Weighted Results
+g=ggsurvplot(
+  km_weighted,
+  data = ps_dt,
+  risk.table = TRUE,
+  pval = TRUE,
+  palette = c("orange", "purple"),
+  title = "Landmark Analysis (7.5 mo) - IPTW Weighted Cohort",
+  xlab = "Months from Landmark",
+  legend.labs = c("SOC", "mFOLFOXIRI"),
+  ggtheme = theme_minimal()
+)
+g
+pdf('FigureS3b.pdf')
+print(g, newpage = FALSE)
+dev.off()
+
+ps_dt[, Group := factor(Group, levels = c("SOC", "mFOLFOXIRI"))]
+
+# Run the Weighted Cox Model
+cox_weighted <- coxph(
+  Surv(RFS_adj, RFS.event) ~ Group, 
+  data = ps_dt, 
+  weights = weights, 
+  robust = TRUE
 )
 
-# Label timepoints
-dt_long[, Timepoint := factor(Timepoint, levels = c("MTM4w", "MTM7m"),
-                              labels = c("4 weeks", "7 months"))]
+report_surv_extra(km_weighted, cox_weighted)
 
-# Define projection category
-dt[, Projection := fifelse(MTM7m > MTM4w, "Increasing",
-                           fifelse(MTM7m < MTM4w, "Decreasing", "Stable"))]
 
-# Merge projection info into long table
-dt_long <- merge(dt_long, dt[, .(`FX-ID`, Projection)], by = "FX-ID", all.x = TRUE)
+# 8. Weighted Cox Model (for Hazard Ratio)
+# Must use robust standard errors (robust = TRUE) when using weights
+weighted_cox <- coxph(Surv(RFS_adj, RFS.event) ~ Group, 
+                      data = ps_dt, 
+                      weights = weights, 
+                      robust = TRUE)
 
-# Cleaned projection for color mapping
-dt_long[, Projection_clean := fcase(
-  Projection == "Increasing", "Increasing",
-  Projection == "Decreasing", "Decreasing",
-  default = "Other"
-)]
+summary(weighted_cox)
 
-# Plot
-ggplot(dt_long, aes(x = Timepoint, y = MTM, group = `FX-ID`, color = Projection_clean)) +
-  geom_line() +
-  geom_point(size = 2) +
-  geom_text_repel(
-    data = dt_long[Timepoint == "7 months" & Projection %in% c("Increasing", "Decreasing")],
-    mapping = aes(label = `FX-ID`),
-    direction = "y",
-    hjust = -0.1,
-    size = 3,
-    max.overlaps = Inf,
-    box.padding = 0.3
-  ) +
-  geom_text_repel(
-    data = dt_long[Timepoint == "4 weeks" & Projection %in% c("Increasing", "Decreasing")],
-    aes(label = `FX-ID`),
-    direction = "y",
-    hjust = 1.1,
-    size = 3,
-    max.overlaps = Inf,
-    box.padding = 0.3,
-    segment.color = "grey50"
-  ) +
-  scale_y_log10() +
-  scale_color_manual(
-    values = c("Increasing" = "red", "Decreasing" = "blue", "Other" = "gray"),
-    breaks = c("Increasing", "Decreasing"),
-    labels = c("Increasing", "Decreasing")
-  ) +
-  labs(
-    title = "ctDNA Levels Over Time",
-    # subtitle = "mFOLFOXIRI group",
-    subtitle = "SOC group",
-    y = "MTM (ng/mL, log scale)",
-    x = "Timepoint",
-    color = "Projection"
-  ) +
-  theme_minimal()
 
-#---- inspect clearance ----
-merge_dataset[ctDNA_MRD_4wk=='POSITIVE' & ctDNA_postACT_7mo=='NEGATIVE' & Group=='SOC',ACT_regimen]
